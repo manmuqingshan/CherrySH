@@ -35,7 +35,7 @@ CherrySH 是一个专为嵌入式应用程序而设计的微型Shell。
 
 以先楫半导体hpm5301evklite为例。
 
-命令查找采用的是 gcc 的 section 功能，因此，我们需要先修改 linkerscript 文件，增加相关 section,举例 gcc ld 文件：
+- 命令查找采用的是 gcc 的 section 功能，因此，我们需要先修改 linkerscript 文件，增加相关 section,举例 gcc ld 文件：
 
 ```
     .text : {
@@ -54,17 +54,13 @@ CherrySH 是一个专为嵌入式应用程序而设计的微型Shell。
 
 ```
 
+- 实现字符输入输出函数，接收推荐用中断 + ringbuf的形式
+
 ``` c
-// 包含头文件
 #include "csh.h"
 
-// 创建一个shell实例
 static chry_shell_t csh;
 
-```
-
-``` c
-// 字符输出函数，将字符直接输出到串口
 static uint16_t csh_sput_cb(chry_readline_t *rl, const void *data, uint16_t size)
 {
     uint16_t i;
@@ -75,14 +71,9 @@ static uint16_t csh_sput_cb(chry_readline_t *rl, const void *data, uint16_t size
         }
     }
 
-    // 返回成功输出的字符数量
     return i;
 }
 
-```
-
-``` c
-// 字符输入函数，直接从串口读入字符，如果波特率较高可以增加一个FIFO缓冲输入
 static uint16_t csh_sget_cb(chry_readline_t *rl, void *data, uint16_t size)
 {
     uint16_t i;
@@ -93,146 +84,27 @@ static uint16_t csh_sget_cb(chry_readline_t *rl, void *data, uint16_t size)
         }
     }
 
-    // 返回成功读取的字符数量
     return i;
 }
 ```
 
+- 初始化 shell，参考 samples 中实现
+- 调用 `chry_shell_task_exec` 和 `chry_shell_task_repl`，参考 samples 中实现
+- 配置系统环境变量
+
 ``` c
-// shell 初始化
-int shell_init(void)
-{
-    // 结构体用于配置初始化参数
-    chry_shell_init_t csh_init;
+#define __ENV_PATH "/sbin:/bin"
+const char ENV_PATH[] = __ENV_PATH;
+CSH_RVAR_EXPORT(ENV_PATH, PATH, sizeof(__ENV_PATH));
 
-    // 设置字符输入输出函数（必须实现）
-    csh_init.sput = csh_sput_cb;
-    csh_init.sget = csh_sget_cb;
-
-    // linkscript 中定义的符号，用于存放导出的命令和变量
-    extern const int __fsymtab_start;
-    extern const int __fsymtab_end;
-    extern const int __vsymtab_start;
-    extern const int __vsymtab_end;
-
-    // 配置函数表和变量表的起始和结束地址（必须实现）
-    csh_init.command_table_beg = &__fsymtab_start;
-    csh_init.command_table_end = &__fsymtab_end;
-    csh_init.variable_table_beg = &__vsymtab_start;
-    csh_init.variable_table_end = &__vsymtab_end;
-
-    // 定义一个提示符缓冲区
-    static char csh_prompt_buffer[128];
-    // 配置提示符缓冲区（可选）
-    // 取决于是否使能可编辑提示符功能 CONFIG_CSH_PROMPTEDIT
-    csh_init.prompt_buffer = csh_prompt_buffer;
-    csh_init.prompt_buffer_size = sizeof(csh_prompt_buffer);
-
-    // 定义一个历史记录缓冲区，缓冲的命令条数取决于缓冲区大小以及命令长度
-    static char csh_history_buffer[128];
-
-    // 配置历史记录缓冲区（可选）
-    // 取决于是否使能历史记录功能 CONFIG_CSH_LNBUFF_STATIC
-    csh_init.history_buffer = csh_history_buffer;
-    csh_init.history_buffer_size = sizeof(csh_history_buffer);
-
-    // 定义一个行输入缓冲区，最大输入的单条命令无法超过缓冲区长度
-    static char csh_line_buffer[128];
-
-    // 配置行输入缓冲区（可选）
-    // 取决于是否使能静态行缓冲区功能 CONFIG_CSH_LNBUFF_STATIC
-    // 如果不使能静态行缓冲区功能，行缓冲区将存在于栈上，此时不能使用非阻塞模式
-    //   即 CONFIG_CSH_NOBLOCK 必须为0
-    csh_init.line_buffer = csh_line_buffer;
-    csh_init.line_buffer_size = sizeof(csh_line_buffer);
-
-    // 用户数量默认为1
-    csh_init.uid = 0; // 默认用户ID
-    csh_init.user[0] = "cherry"; // 用户ID0的用户名
-    csh_init.hash[0] = NULL; // 用户ID0的密码哈希值
-    csh_init.host = "hpm5301evklite"; // Host的名称
-
-    // 初始化
-    int ret = chry_shell_init(&csh, &csh_init);
-    if (ret) {
-        return -1;
-    }
-
-    return 0;
-}
+#define __ENV_ZERO ""
+const char ENV_ZERO[] = __ENV_ZERO;
+CSH_RVAR_EXPORT(ENV_ZERO, ZERO, sizeof(__ENV_ZERO));
 ```
 
-``` c
-// shell 的主函数，需要再while(1)中循环调用
-int shell_main(void)
-{
-    int ret;
-
-restart:
-    ret = chry_shell_task_repl(&csh);
-    if (ret == -1) {
-        // 执行失败或者出现问题
-        return -1;
-    } else if (ret == 1) {
-        // 非阻塞模式执行读取字符时读出字符不足，先返回执行用户其他工作
-        return 0;
-    } else {
-        // 执行成功结束，重新执行
-        goto restart;
-    }
-
-}
-
-```
+- 使用 `CSH_CMD_EXPORT` 导出命令
 
 ``` c
-// 用于避免printf和shell竞争同一个串口，printf之前调用
-void shell_uart_lock(void)
-{
-    chry_readline_erase_line(&csh.rl);
-}
-
-// 用于避免printf和shell竞争同一个串口，printf之后调用
-void shell_uart_unlock(void)
-{
-    chry_readline_edit_refresh(&csh.rl);
-}
-```
-
-``` c
-
-int main(void)
-{
-    board_init();
-    board_init_led_pins();
-
-    shell_init();
-
-    uint32_t freq = clock_get_frequency(clock_mchtmr0);
-    uint64_t time = mchtmr_get_count(HPM_MCHTMR) / (freq / 1000);
-
-    while (1) {
-        shell_main();
-
-        // 每5秒打印一次
-        uint64_t now = mchtmr_get_count(HPM_MCHTMR) / (freq / 1000);
-        if (now > time + 5000) {
-            time = now;
-            // 打印时需要调用锁，避免printf影响shell输入
-            shell_uart_lock();
-            printf("other task interval 5S\r\n");
-            shell_uart_unlock();
-        }
-    }
-
-    return 0;
-}
-```
-
-``` c
-// 实现一个命令的导出
-// write_led 1 点亮LED
-// write_led 0 熄灭LED
 static int write_led(int argc, char **argv)
 {
     if (argc < 2) {
