@@ -4,7 +4,6 @@
 #include "chry_ringbuffer.h"
 #include "csh.h"
 #include "shell.h"
-#include "ec_master.h"
 
 #define task_repl_PRIORITY (configMAX_PRIORITIES - 4U)
 #define task_exec_PRIORITY (configMAX_PRIORITIES - 5U)
